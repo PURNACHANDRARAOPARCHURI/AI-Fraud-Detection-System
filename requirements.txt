@@ -5,6 +5,5 @@ xgboost
 fastapi
 uvicorn
 joblib
-streamlit
 requests
- 
+gdown
