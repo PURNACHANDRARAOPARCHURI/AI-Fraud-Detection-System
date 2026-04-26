@@ -2,31 +2,53 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import numpy as np
 import joblib
-import json
+import os
+import gdown
+
+# =========================
+# Download Models from Google Drive
+# =========================
+
+os.makedirs("models", exist_ok=True)
+
+FILES = {
+    "xgb_model.pkl": "1VJ-5WaXw2H06O6VnaydWWgbWprll2plE",
+    "iso_model.pkl": "1W0oPvB9Q8HjThEwxajTCF3gLqYQFqkre"
+}
+
+for name, fid in FILES.items():
+    path = f"models/{name}"
+    if not os.path.exists(path):
+        print(f"Downloading {name}...")
+        url = f"https://drive.google.com/uc?id={fid}"
+        gdown.download(url, path, quiet=False)
+
+# =========================
+# Load Models
+# =========================
+
+xgb = joblib.load("models/xgb_model.pkl")
+iso = joblib.load("models/iso_model.pkl")
+
+# =========================
+# Imports (FIXED)
+# =========================
 
 from src.risk_enginee import compute_risk
 from src.decision_engine import make_decision
 from src.reasons import generate_reasons
 from src.loggers import log_transaction
 
-# Load models
-xgb = joblib.load("models/xgb_model.pkl")
-iso = joblib.load("models/iso_model.pkl")
-
-# Load threshold
-try:
-    with open("models/config.json") as f:
-        config = json.load(f)
-    THRESHOLD = config.get("threshold", None)
-except:
-    THRESHOLD = None
+# =========================
+# FastAPI App
+# =========================
 
 app = FastAPI(title="Fraud Risk Scoring API")
-
 
 # =========================
 # Input Schema
 # =========================
+
 class Transaction(BaseModel):
     amount: float
     hour: int
@@ -37,19 +59,14 @@ class Transaction(BaseModel):
     type: int
 
 
-# =========================
-# Routes
-# =========================
 @app.get("/")
 def home():
-    return {"message": "Fraud Detection API is running"}
-
+    return {"message": "Fraud Detection API is running 🚀"}
 
 @app.post("/score")
 def score(data: Transaction):
 
-    # ✅ FIXED feature order (same as training)
-    X = np.array([[ 
+    X = np.array([[
         data.amount,
         data.hour,
         data.is_large_tx,
@@ -60,10 +77,10 @@ def score(data: Transaction):
     ]])
 
     # Predictions
-    prob = xgb.predict_proba(X)[0][1]
-    anomaly = -iso.decision_function(X)[0]
+    prob = float(xgb.predict_proba(X)[0][1])
+    anomaly = float(-iso.decision_function(X)[0])
 
-    # ✅ FIXED (added comma + amount)
+    # Risk score
     risk = compute_risk(
         prob,
         anomaly,
@@ -73,24 +90,17 @@ def score(data: Transaction):
     )
 
     # Decision
-    if THRESHOLD is not None:
-        decision = "BLOCK" if risk > THRESHOLD else "ALLOW"
-    else:
-        decision = make_decision(risk)
+    decision = make_decision(risk)
 
     # Explainability
     reasons = generate_reasons(data.dict(), prob, anomaly)
 
-    # Response
     result = {
-        "fraud_probability": float(prob),
-        "anomaly_score": float(anomaly),
+        "fraud_probability": prob,
+        "anomaly_score": anomaly,
         "risk_score": float(risk),
         "decision": decision,
         "reasons": reasons
-    }
-
-    # Logging
+    }   
     log_transaction(data.dict(), result)
-
     return result
