@@ -1,54 +1,60 @@
+# =========================
+# FIX IMPORT PATH
+# =========================
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+# =========================
+# IMPORTS
+# =========================
 from fastapi import FastAPI
 from pydantic import BaseModel
 import numpy as np
 import joblib
-import os
 import gdown
 
 # =========================
-# Download Models from Google Drive
+# DOWNLOAD MODELS FIRST (CRITICAL)
 # =========================
-
-os.makedirs("models", exist_ok=True)
+MODEL_DIR = "models"
+os.makedirs(MODEL_DIR, exist_ok=True)
 
 FILES = {
     "xgb_model.pkl": "1VJ-5WaXw2H06O6VnaydWWgbWprll2plE",
     "iso_model.pkl": "1W0oPvB9Q8HjThEwxajTCF3gLqYQFqkre"
 }
 
-for name, fid in FILES.items():
-    path = f"models/{name}"
+for filename, file_id in FILES.items():
+    path = os.path.join(MODEL_DIR, filename)
+
     if not os.path.exists(path):
-        print(f"Downloading {name}...")
-        url = f"https://drive.google.com/uc?id={fid}"
+        print(f"Downloading {filename}...")
+        url = f"https://drive.google.com/uc?id={file_id}"
         gdown.download(url, path, quiet=False)
 
 # =========================
-# Load Models
+# LOAD MODELS (AFTER DOWNLOAD)
 # =========================
-
-xgb = joblib.load("models/xgb_model.pkl")
-iso = joblib.load("models/iso_model.pkl")
+xgb = joblib.load(os.path.join(MODEL_DIR, "xgb_model.pkl"))
+iso = joblib.load(os.path.join(MODEL_DIR, "iso_model.pkl"))
 
 # =========================
-# Imports (FIXED)
+# IMPORT YOUR MODULES
 # =========================
-
-from src.risk_enginee import compute_risk
+from src.risk_enginee import compute_risk   # your actual file name
 from src.decision_engine import make_decision
 from src.reasons import generate_reasons
 from src.loggers import log_transaction
 
 # =========================
-# FastAPI App
+# FASTAPI APP
 # =========================
-
 app = FastAPI(title="Fraud Risk Scoring API")
 
 # =========================
-# Input Schema
+# INPUT SCHEMA
 # =========================
-
 class Transaction(BaseModel):
     amount: float
     hour: int
@@ -58,7 +64,9 @@ class Transaction(BaseModel):
     emptied_account: int
     type: int
 
-
+# =========================
+# ROUTES
+# =========================
 @app.get("/")
 def home():
     return {"message": "Fraud Detection API is running 🚀"}
@@ -101,6 +109,8 @@ def score(data: Transaction):
         "risk_score": float(risk),
         "decision": decision,
         "reasons": reasons
-    }   
+    }
+
     log_transaction(data.dict(), result)
+
     return result
