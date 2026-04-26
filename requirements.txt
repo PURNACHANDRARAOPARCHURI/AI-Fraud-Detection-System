@@ -1,9 +1,9 @@
-pandas
-numpy
-scikit-learn
-xgboost
 fastapi
 uvicorn
 joblib
-requests
+numpy
+pandas
+scikit-learn
+xgboost
 gdown
+requests
