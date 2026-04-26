@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 import os
-LOG_FILE = "venv/logs/logs.txt"
+LOG_FILE = "logs/logs.txt"
 def log_transaction(input_data, result):
     log_entry = {
         "timestamp": datetime.utcnow().isoformat(),

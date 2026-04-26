@@ -1,118 +1,80 @@
 import streamlit as st
 import requests
-import random
 from datetime import datetime
 
-API_URL = "http://127.0.0.1:8000/score"
+API_URL = "http://127.0.0.1:8000"
 
-st.set_page_config(page_title="Fraud Detection", layout="wide")
+st.set_page_config(page_title="Fraud Detection System", layout="centered")
 
-# =========================
-# HEADER
-# =========================
-st.title("🏦 Fraud Risk Monitoring System")
-st.caption("Real-time transaction monitoring and fraud detection")
+st.title("💳 Smart Fraud Detection")
+st.markdown("### Real-time Transaction Risk Analysis")
 
-st.markdown("---")
+current_time = datetime.now()
+st.info(f"🕒 Current Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# =========================
-# SECTION 1: USER TRANSACTION
-# =========================
-st.subheader("🧾 Transaction Initiated")
+st.subheader("Enter Transaction Details")
 
-col1, col2 = st.columns(2)
+account_id = st.text_input("👤 Account ID", value="user_1")
 
-with col1:
-    amount = st.number_input("💰 Transaction Amount", min_value=0.0, step=100.0)
+amount = st.number_input("💰 Transaction Amount", min_value=0.0, value=1000.0)
 
-with col2:
-    tx_type = st.selectbox(
-        "💳 Transaction Type",
-        ["PAYMENT", "TRANSFER", "CASH_OUT", "DEBIT", "CASH_IN"]
-    )
+tx_type = st.selectbox(
+    "🏦 Transaction Type",
+    ["CASH_IN", "CASH_OUT", "TRANSFER", "PAYMENT", "DEBIT"]
+)
 
-# =========================
-# AUTO TIME (REALISTIC)
-# =========================
-hour = datetime.now().hour
-st.write(f"⏰ Transaction Time: {hour}:00 (auto-detected)")
+type_mapping = {
+    "CASH_IN": 0,
+    "CASH_OUT": 1,
+    "DEBIT": 2,
+    "PAYMENT": 3,
+    "TRANSFER": 4
+}
 
-st.markdown("---")
-
-# =========================
-# SECTION 2: SYSTEM ANALYSIS
-# =========================
-st.subheader("⚙️ System Behavioral Analysis")
-
-# Simulate realistic account behavior
-old_balance = random.uniform(10000, 200000)
-new_balance = max(old_balance - amount, 0)
-
-balance_diff = old_balance - new_balance
-tx_count = random.randint(0, 20)
-emptied_account = 1 if new_balance == 0 else 0
-is_large_tx = 1 if amount > 200000 else 0
-
-col3, col4, col5 = st.columns(3)
-
-col3.metric("🔁 Transaction Frequency", tx_count)
-col4.metric("💼 Old Balance", f"{old_balance:.0f}")
-col5.metric("📉 New Balance", f"{new_balance:.0f}")
-
-col6, col7 = st.columns(2)
-col6.metric("📊 Balance Change", f"{balance_diff:.0f}")
-col7.metric("🏦 Account Emptied", "Yes" if emptied_account else "No")
-
-st.info("Behavioral and financial features are automatically derived from transaction context")
-
-st.markdown("---")
-
-# =========================
-# SECTION 3: DECISION ENGINE
-# =========================
-if st.button("🚀 Analyze Transaction"):
-
-    payload = {
+if st.button("🔍 Analyze Transaction"):
+    data = {
+        "account_id": account_id,
         "amount": amount,
-        "hour": hour,
-        "tx_count": tx_count,
-        "balance_diff": balance_diff,
-        "is_large_tx": is_large_tx,
-        "emptied_account": emptied_account,
-        "type": ["PAYMENT","TRANSFER","CASH_OUT","DEBIT","CASH_IN"].index(tx_type)
+        "type": type_mapping[tx_type]
     }
 
-    try:
-        response = requests.post(API_URL, json=payload)
+    with st.spinner("Analyzing transaction... Please wait ⏳"):
+        try:
+            response = requests.post(
+                f"{API_URL}/score",
+                json=data,
+                timeout=90
+            )
 
-        if response.status_code == 200:
-            data = response.json()
+            if response.status_code == 200:
+                result = response.json()
 
-            st.markdown("## 🚨 Risk Decision Engine Output")
+                st.success("✅ Analysis Completed")
 
-            col8, col9, col10 = st.columns(3)
+                col1, col2 = st.columns(2)
 
-            col8.metric("Fraud Probability", f"{data['fraud_probability']:.2f}")
-            col9.metric("Risk Score", f"{data['risk_score']:.2f}")
-            col10.metric("Decision", data["decision"])
+                col1.metric("Fraud Probability", f"{result['fraud_probability']:.2f}")
+                col2.metric("Risk Score", f"{result['risk_score']:.2f}")
 
-            # Decision Alerts
-            if data["decision"] == "BLOCK":
-                st.error("🚨 Transaction Blocked (High Risk)")
-            elif data["decision"] == "REVIEW":
-                st.warning("⚠️ Flagged for Manual Review")
+                st.subheader("🚦 Decision")
+
+                if result["decision"] == "BLOCK":
+                    st.error("🚫 Transaction Blocked (Fraud Suspected)")
+                else:
+                    st.success("✅ Transaction Allowed")
+
+                st.subheader("📊 Anomaly Score")
+                st.write(result["anomaly_score"])
+
+                st.subheader("🧠 Why this decision?")
+                for reason in result.get("reasons", []):
+                    st.write("•", reason)
+
             else:
-                st.success("✅ Transaction Approved")
+                st.error("❌ API Error")
 
-            st.markdown("---")
+        except requests.exceptions.ReadTimeout:
+            st.warning("⏳ Server is waking up. Try again in a few seconds.")
 
-            # Explainability
-            st.subheader("Why was this flagged?")
-            for r in data["reasons"]:
-                st.write("•", r)
-
-        else:
-            st.error("API Error")
-
-    except:
-        st.error("🚨 Backend API is not running. Start FastAPI server.")
+        except Exception as e:
+            st.error(f"❌ Connection Error: {e}")

@@ -1,116 +1,90 @@
-# =========================
-# FIX IMPORT PATH
-# =========================
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# =========================
-# IMPORTS
-# =========================
 from fastapi import FastAPI
 from pydantic import BaseModel
 import numpy as np
 import joblib
-import gdown
+from datetime import datetime
+from collections import defaultdict
 
-# =========================
-# DOWNLOAD MODELS FIRST (CRITICAL)
-# =========================
-MODEL_DIR = "models"
-os.makedirs(MODEL_DIR, exist_ok=True)
+xgb = joblib.load("models/xgb_model.pkl")
+iso = joblib.load("models/iso_model.pkl")
 
-FILES = {
-    "xgb_model.pkl": "1VJ-5WaXw2H06O6VnaydWWgbWprll2plE",
-    "iso_model.pkl": "1W0oPvB9Q8HjThEwxajTCF3gLqYQFqkre"
-}
-
-for filename, file_id in FILES.items():
-    path = os.path.join(MODEL_DIR, filename)
-
-    if not os.path.exists(path):
-        print(f"Downloading {filename}...")
-        url = f"https://drive.google.com/uc?id={file_id}"
-        gdown.download(url, path, quiet=False)
-
-# =========================
-# LOAD MODELS (AFTER DOWNLOAD)
-# =========================
-xgb = joblib.load(os.path.join(MODEL_DIR, "xgb_model.pkl"))
-iso = joblib.load(os.path.join(MODEL_DIR, "iso_model.pkl"))
-
-# =========================
-# IMPORT YOUR MODULES
-# =========================
-from src.risk_enginee import compute_risk   # your actual file name
+from src.risk_enginee import compute_risk
 from src.decision_engine import make_decision
 from src.reasons import generate_reasons
-from src.loggers import log_transaction
 
-# =========================
-# FASTAPI APP
-# =========================
-app = FastAPI(title="Fraud Risk Scoring API")
+app = FastAPI(title="Fraud Detection API")
 
-# =========================
-# INPUT SCHEMA
-# =========================
 class Transaction(BaseModel):
+    account_id: str
     amount: float
-    hour: int
-    tx_count: int
-    balance_diff: float
-    is_large_tx: int
-    emptied_account: int
     type: int
 
-# =========================
-# ROUTES
-# =========================
+user_history = defaultdict(list)
+
+def generate_features(data):
+    hour = datetime.now().hour
+    history = user_history[data.account_id]
+    tx_count = len(history)
+    if len(history) >= 2:
+        diffs = np.diff(history)
+        balance_diff = float(np.mean(diffs))
+    else:
+        balance_diff = 0.0
+    is_large_tx = 1 if len(history) > 0 and data.amount > (sum(history)/len(history)) else 0
+    outgoing_types = [1, 2, 3, 4]
+
+    emptied_account = 1 if (
+        data.type in outgoing_types and
+        len(history) > 0 and
+        data.amount >= max(history)
+    ) else 0
+    return [
+        data.amount,
+        hour,
+        is_large_tx,
+        tx_count,
+        balance_diff,
+        emptied_account,
+        data.type
+    ]
+
 @app.get("/")
 def home():
-    return {"message": "Fraud Detection API is running 🚀"}
+    return {"message": "API running locally 🚀"}
 
 @app.post("/score")
 def score(data: Transaction):
-
-    X = np.array([[
-        data.amount,
-        data.hour,
-        data.is_large_tx,
-        data.tx_count,
-        data.balance_diff,
-        data.emptied_account,
-        data.type
-    ]])
-
-    # Predictions
+    features = generate_features(data)
+    X = np.array([features])
     prob = float(xgb.predict_proba(X)[0][1])
     anomaly = float(-iso.decision_function(X)[0])
-
-    # Risk score
     risk = compute_risk(
         prob,
         anomaly,
-        data.is_large_tx,
-        data.emptied_account,
+        features[2],
+        features[5],
         data.amount
     )
-
-    # Decision
     decision = make_decision(risk)
-
-    # Explainability
-    reasons = generate_reasons(data.dict(), prob, anomaly)
-
-    result = {
+    feature_dict = {
+        "amount": data.amount,
+        "type": data.type,
+        "hour": features[1],
+        "is_large_tx": features[2],
+        "tx_count": features[3],
+        "balance_diff": features[4],
+        "emptied_account": features[5]
+    }
+    reasons = generate_reasons(feature_dict, prob, anomaly)
+    user_history[data.account_id].append(data.amount)
+    return {
         "fraud_probability": prob,
         "anomaly_score": anomaly,
-        "risk_score": float(risk),
+        "risk_score": risk,
         "decision": decision,
         "reasons": reasons
     }
-
-    log_transaction(data.dict(), result)
-
-    return result

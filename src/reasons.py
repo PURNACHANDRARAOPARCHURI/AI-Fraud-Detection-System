@@ -10,7 +10,7 @@ def generate_reasons(data,prob,anamoly):
         reasons.append("unusal balance difference observed")
     if data.get("amount",0)>100000:
         reasons.append("Huge amount change")
-    if data.get("type",-1)==2:
+    if data.get("type",-1) in [1,4]:
         reasons.append("cash-out Transactions are high risk")
     if prob>=0.9:
         reasons.append("Model detected High fraud Probability")
