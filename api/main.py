@@ -1,90 +1,114 @@
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 from fastapi import FastAPI
-from pydantic import BaseModel
-import numpy as np
+import pandas as pd
 import joblib
-from datetime import datetime
-from collections import defaultdict
 
-xgb = joblib.load("models/xgb_model.pkl")
-iso = joblib.load("models/iso_model.pkl")
+from api.db import get_user_transactions, insert_transaction
+from api.schemas import TransactionRequest
 
-from src.risk_enginee import compute_risk
+from src.feature_engineering import create_features
+from src.risk_engine import compute_risk
 from src.decision_engine import make_decision
 from src.reasons import generate_reasons
 
-app = FastAPI(title="Fraud Detection API")
+app = FastAPI()
 
-class Transaction(BaseModel):
-    account_id: str
-    amount: float
-    type: int
+# Load models
+xgb = joblib.load("models/xgb_model.pkl")
+iso = joblib.load("models/iso_model.pkl")
 
-user_history = defaultdict(list)
-
-def generate_features(data):
-    hour = datetime.now().hour
-    history = user_history[data.account_id]
-    tx_count = len(history)
-    if len(history) >= 2:
-        diffs = np.diff(history)
-        balance_diff = float(np.mean(diffs))
-    else:
-        balance_diff = 0.0
-    is_large_tx = 1 if len(history) > 0 and data.amount > (sum(history)/len(history)) else 0
-    outgoing_types = [1, 2, 3, 4]
-
-    emptied_account = 1 if (
-        data.type in outgoing_types and
-        len(history) > 0 and
-        data.amount >= max(history)
-    ) else 0
-    return [
-        data.amount,
-        hour,
-        is_large_tx,
-        tx_count,
-        balance_diff,
-        emptied_account,
-        data.type
-    ]
-
-@app.get("/")
-def home():
-    return {"message": "API running locally 🚀"}
 
 @app.post("/score")
-def score(data: Transaction):
-    features = generate_features(data)
-    X = np.array([features])
-    prob = float(xgb.predict_proba(X)[0][1])
-    anomaly = float(-iso.decision_function(X)[0])
+def score(data: TransactionRequest):
+
+    df = get_user_transactions(data.account_id)
+
+    # ✅ NEW USER
+    if df.empty:
+        df = pd.DataFrame([{
+            "account_id": data.account_id,
+            "step": 1,
+            "type": data.type,
+            "amount": data.amount,
+            "oldbalanceOrg": 10000,
+            "newbalanceOrig": 10000 - data.amount
+        }])
+    else:
+        # Ensure required columns
+        for col in ["oldbalanceOrg", "newbalanceOrig", "step"]:
+            if col not in df.columns:
+                df[col] = 10000
+
+        last_balance = df.iloc[-1].get("newbalanceOrig", 10000)
+
+        new_tx = {
+            "account_id": data.account_id,
+            "step": int(df["step"].max()) + 1,
+            "type": data.type,
+            "amount": data.amount,
+            "oldbalanceOrg": last_balance,
+            "newbalanceOrig": last_balance - data.amount
+        }
+
+        df = pd.concat([df, pd.DataFrame([new_tx])], ignore_index=True)
+
+    # Required for feature engineering
+    df["nameOrig"] = df["account_id"]
+
+    # Feature engineering
+    df = create_features(df)
+    latest = df.iloc[-1]
+
+    features = [
+        "amount", "hour", "is_large_tx",
+        "tx_count", "balance_diff",
+        "emptied_account", "type"
+    ]
+
+    # Ensure features exist
+    for col in features:
+        if col not in latest:
+            latest[col] = 0
+
+    X = latest[features].values.reshape(1, -1)
+
+    # Predictions
+    try:
+        prob = xgb.predict_proba(X)[0][1]
+    except:
+        prob = 0.5
+
+    try:
+        anomaly = -iso.decision_function(X)[0]
+    except:
+        anomaly = 0.5
+
     risk = compute_risk(
         prob,
         anomaly,
-        features[2],
-        features[5],
-        data.amount
+        latest.get("is_large_tx", 0),
+        latest.get("emptied_account", 0),
+        latest.get("amount", 0)
     )
+
     decision = make_decision(risk)
-    feature_dict = {
-        "amount": data.amount,
+    reasons = generate_reasons(latest.to_dict(), prob, anomaly)
+
+    # Save transaction
+    final_tx = {
+        "account_id": data.account_id,
+        "step": int(latest.get("tx_count", 0)) + 1,
         "type": data.type,
-        "hour": features[1],
-        "is_large_tx": features[2],
-        "tx_count": features[3],
-        "balance_diff": features[4],
-        "emptied_account": features[5]
+        "amount": float(latest.get("amount", 0)),
+        "oldbalanceOrg": float(latest.get("oldbalanceOrg", 10000)),
+        "newbalanceOrig": float(latest.get("newbalanceOrig", 10000))
     }
-    reasons = generate_reasons(feature_dict, prob, anomaly)
-    user_history[data.account_id].append(data.amount)
+
+    insert_transaction(final_tx)
+
     return {
-        "fraud_probability": prob,
-        "anomaly_score": anomaly,
-        "risk_score": risk,
+        "transaction_count": int(latest.get("tx_count", 0)) + 1,
+        "fraud_probability": float(prob),
+        "risk_score": float(risk),
         "decision": decision,
         "reasons": reasons
     }

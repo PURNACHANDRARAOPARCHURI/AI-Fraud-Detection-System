@@ -1,9 +1,10 @@
 fastapi
 uvicorn
-joblib
-numpy
 pandas
+numpy
 scikit-learn
 xgboost
-gdown
-requests
+sqlalchemy
+psycopg2-binary
+joblib
+python-dotenv
