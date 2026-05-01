@@ -16,7 +16,7 @@ def generate_reasons(data, prob, anomaly):
     if data.get("amount", 0) > 100000:
         reasons.append("Huge transaction amount")
 
-    if data.get("amount", 0) > 10000 and data.get("type") in [1, 4]:
+    if data.get("amount", 0) > 100000 and data.get("type") in [1, 4]:
         reasons.append("High-risk large transaction type")
 
     if prob >= 0.9:
