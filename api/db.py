@@ -17,3 +17,4 @@ def insert_transaction(tx):
 
     except Exception as e:
         print("INSERT ERROR:", e)
+        raise e
