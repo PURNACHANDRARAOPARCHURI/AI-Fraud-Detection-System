@@ -20,7 +20,6 @@ features = [
     "emptied_account",
     "type"
 ]
-
 X = df[features]
 y = df["isFraud"]
 X_train, X_test, y_train, y_test = train_test_split(
