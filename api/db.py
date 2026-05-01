@@ -7,7 +7,7 @@ def insert_transaction(tx):
         with engine.begin() as conn:
             query = text("""
                 INSERT INTO transactions 
-                (account_id, step, type, amount, oldbalanceorg, newbalanceorig)
+                (account_id, step, type, amount, "oldbalanceOrg", "newbalanceOrig")
                 VALUES 
                 (:account_id, :step, :type, :amount, :oldbalanceOrg, :newbalanceOrig)
             """)
