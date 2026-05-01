@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 import pandas as pd
 import joblib
+import os
 
 from api.db import get_user_transactions, insert_transaction
 from api.schemas import TransactionRequest
@@ -12,103 +13,103 @@ from src.reasons import generate_reasons
 
 app = FastAPI()
 
-# Load models
-xgb = joblib.load("models/xgb_model.pkl")
-iso = joblib.load("models/iso_model.pkl")
+# ✅ Model loading (Render safe)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    xgb = joblib.load(os.path.join(BASE_DIR, "models", "xgb_model.pkl"))
+    iso = joblib.load(os.path.join(BASE_DIR, "models", "iso_model.pkl"))
+except Exception as e:
+    print("Model loading error:", e)
+    xgb = None
+    iso = None
 
 
 @app.post("/score")
 def score(data: TransactionRequest):
+    try:
+        df = get_user_transactions(data.account_id)
 
-    df = get_user_transactions(data.account_id)
+        # NEW USER
+        if df.empty:
+            new_balance = max(0, 10000 - data.amount)
 
-    # ✅ NEW USER
-    if df.empty:
-        df = pd.DataFrame([{
+            df = pd.DataFrame([{
+                "account_id": data.account_id,
+                "step": 1,
+                "type": data.type,
+                "amount": data.amount,
+                "oldbalanceOrg": 10000,
+                "newbalanceOrig": new_balance
+            }])
+        else:
+            for col in ["oldbalanceOrg", "newbalanceOrig", "step"]:
+                if col not in df.columns:
+                    df[col] = 10000
+
+            last_balance = df.iloc[-1].get("newbalanceOrig", 10000)
+            new_balance = max(0, last_balance - data.amount)
+
+            new_tx = {
+                "account_id": data.account_id,
+                "step": int(df["step"].max()) + 1,
+                "type": data.type,
+                "amount": data.amount,
+                "oldbalanceOrg": last_balance,
+                "newbalanceOrig": new_balance
+            }
+
+            df = pd.concat([df, pd.DataFrame([new_tx])], ignore_index=True)
+
+        df["nameOrig"] = df["account_id"]
+
+        df = create_features(df)
+        latest = df.iloc[-1].copy()
+
+        features = [
+            "amount", "hour", "is_large_tx",
+            "tx_count", "balance_diff",
+            "emptied_account", "type"
+        ]
+
+        for col in features:
+            if col not in latest.index:
+                latest[col] = 0
+
+        X = latest[features].astype(float).values.reshape(1, -1)
+
+        prob = xgb.predict_proba(X)[0][1] if xgb else 0.5
+        anomaly = -iso.decision_function(X)[0] if iso else 0.5
+
+        risk = compute_risk(
+            prob,
+            anomaly,
+            latest.get("is_large_tx", 0),
+            latest.get("emptied_account", 0),
+            latest.get("amount", 0)
+        )
+
+        decision = make_decision(risk)
+        reasons = generate_reasons(latest.to_dict(), prob, anomaly)
+
+        final_tx = {
             "account_id": data.account_id,
-            "step": 1,
+            "step": int(df["step"].max()),
             "type": data.type,
-            "amount": data.amount,
-            "oldbalanceOrg": 10000,
-            "newbalanceOrig": 10000 - data.amount
-        }])
-    else:
-        # Ensure required columns
-        for col in ["oldbalanceOrg", "newbalanceOrig", "step"]:
-            if col not in df.columns:
-                df[col] = 10000
-
-        last_balance = df.iloc[-1].get("newbalanceOrig", 10000)
-
-        new_tx = {
-            "account_id": data.account_id,
-            "step": int(df["step"].max()) + 1,
-            "type": data.type,
-            "amount": data.amount,
-            "oldbalanceOrg": last_balance,
-            "newbalanceOrig": last_balance - data.amount
+            "amount": float(latest.get("amount", 0)),
+            "oldbalanceOrg": float(latest.get("oldbalanceOrg", 10000)),
+            "newbalanceOrig": float(latest.get("newbalanceOrig", 10000))
         }
 
-        df = pd.concat([df, pd.DataFrame([new_tx])], ignore_index=True)
+        insert_transaction(final_tx)
 
-    # Required for feature engineering
-    df["nameOrig"] = df["account_id"]
+        return {
+            "transaction_count": int(latest.get("tx_count", 0)),
+            "fraud_probability": float(prob),
+            "risk_score": float(risk),
+            "decision": decision,
+            "reasons": reasons
+        }
 
-    # Feature engineering
-    df = create_features(df)
-    latest = df.iloc[-1]
-
-    features = [
-        "amount", "hour", "is_large_tx",
-        "tx_count", "balance_diff",
-        "emptied_account", "type"
-    ]
-
-    # Ensure features exist
-    for col in features:
-        if col not in latest:
-            latest[col] = 0
-
-    X = latest[features].values.reshape(1, -1)
-
-    # Predictions
-    try:
-        prob = xgb.predict_proba(X)[0][1]
-    except:
-        prob = 0.5
-
-    try:
-        anomaly = -iso.decision_function(X)[0]
-    except:
-        anomaly = 0.5
-
-    risk = compute_risk(
-        prob,
-        anomaly,
-        latest.get("is_large_tx", 0),
-        latest.get("emptied_account", 0),
-        latest.get("amount", 0)
-    )
-
-    decision = make_decision(risk)
-    reasons = generate_reasons(latest.to_dict(), prob, anomaly)
-
-    # Save transaction
-    final_tx = {
-        "account_id": data.account_id,
-        "step": int(latest.get("tx_count", 0)) + 1,
-        "type": data.type,
-        "amount": float(latest.get("amount", 0)),
-        "oldbalanceOrg": float(latest.get("oldbalanceOrg", 10000)),
-        "newbalanceOrig": float(latest.get("newbalanceOrig", 10000))
-    }
-
-    insert_transaction(final_tx)
-
-    return {
-        "transaction_count": int(latest.get("tx_count", 0)) + 1,
-        "fraud_probability": float(prob),
-        "risk_score": float(risk),
-        "decision": decision,
-        "reasons": reasons
-    }
+    except Exception as e:
+        return {"error": str(e)}
