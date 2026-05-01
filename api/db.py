@@ -19,7 +19,7 @@ engine = create_engine(
 
 def get_user_transactions(account_id):
     query = "SELECT * FROM transactions WHERE account_id = %s ORDER BY step ASC"
-    return pd.read_sql(query, engine, params=[account_id])
+    return pd.read_sql(query, engine, params=(account_id,))
 
 def insert_transaction(tx):
     df = pd.DataFrame([tx])
