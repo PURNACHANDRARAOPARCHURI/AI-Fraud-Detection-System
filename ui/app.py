@@ -3,7 +3,7 @@ import requests
 from datetime import datetime
 
 # 🔗 Change this when deploying
-API_URL = "http://127.0.0.1:8000"
+API_URL = "https://ai-fraud-detection-system-f0ef.onrender.com"
 
 st.set_page_config(page_title="Fraud Detection System", layout="centered")
 
@@ -53,7 +53,7 @@ if st.button("🔍 Analyze Transaction"):
             response = requests.post(
                 f"{API_URL}/score",
                 json=data,
-                timeout=30
+                timeout=90
             )
 
             # 🔍 DEBUG INFO (VERY IMPORTANT)

@@ -1,6 +1,5 @@
 venv/
 data/
-models/
 *.csv
 *.pkl
 *.joblib
