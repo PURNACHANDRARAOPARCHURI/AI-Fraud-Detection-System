@@ -56,9 +56,6 @@ if st.button("🔍 Analyze Transaction"):
                 timeout=90
             )
 
-            # 🔍 DEBUG INFO (VERY IMPORTANT)
-            st.write("Status Code:", response.status_code)
-            st.write("Raw Response:", response.text)
 
             if response.status_code == 200:
                 result = response.json()
